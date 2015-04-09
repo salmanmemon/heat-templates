@@ -1,0 +1,127 @@
+heat_template_version: 2013-05-23 
+
+description: HOT template to deploy LAMP stack
+
+parameters: 
+  image: 
+    type: string 
+    label: Image name or ID
+    description: Image to be used for lamp, please use an Ubuntu based image.
+    default: Ubuntu14.04-20150402
+  key_name: 
+    type: string 
+    label: Key Name
+    description: Name of key-pair to be used for SSH access
+  flavor: 
+    type: string 
+    label: Flavor
+    description: Type of instance (flavor) to be used
+    default: m1.small
+  public_network: 
+    type: string 
+    label: Name or ID
+    description: The public network name or ID 
+    default: PublicNet
+  floating_network_id: 
+    type: string 
+    label: name or ID    
+    description: The floating ip network id
+    default: 87cb4819-182e-4f2d-86d2-6970c11962da 
+
+resources: 
+  internal_router: 
+    type: OS::Neutron::Router 
+    properties: 
+      external_gateway_info: 
+        network: { get_param: public_network } 
+
+  internal_network: 
+    type: OS::Neutron::Net 
+
+  internal_subnet: 
+    type: OS::Neutron::Subnet 
+    properties: 
+      network_id: { get_resource: internal_network } 
+      cidr: 10.10.121.0/24 
+      gateway_ip: 10.10.121.1 
+      dns_nameservers: 
+        - 8.8.8.8 
+
+  internal_router_interface: 
+    type: OS::Neutron::RouterInterface 
+    properties: 
+      subnet_id: { get_resource: internal_subnet } 
+      router_id: { get_resource: internal_router } 
+
+  lamp_floatingip: 
+    type: OS::Neutron::FloatingIP 
+    properties: 
+      floating_network_id: { get_param: floating_network_id } 
+
+  lamp_floatingip_assoc: 
+    type: OS::Neutron::FloatingIPAssociation 
+    properties: 
+      floatingip_id: { get_resource: lamp_floatingip } 
+      port_id: { get_resource: lamp_internal_port } 
+
+  lamp_internal_port: 
+    type: OS::Neutron::Port 
+    properties: 
+      network_id: { get_resource: internal_network } 
+      fixed_ips: 
+        - subnet_id: { get_resource: internal_subnet  } 
+      security_groups: 
+        - { get_resource: lamp_secgroup } 
+
+  lamp_secgroup: 
+    type: OS::Neutron::SecurityGroup 
+    properties: 
+      description: Basic security group for this stack
+      rules: 
+        - direction: egress 
+          protocol: tcp 
+          remote_ip_prefix: 0.0.0.0/0 
+        - direction: egress 
+          protocol: udp 
+          remote_ip_prefix: 0.0.0.0/0 
+        - direction: egress 
+          protocol: icmp 
+          remote_ip_prefix: 0.0.0.0/0 
+        - direction: ingress 
+          protocol: tcp 
+          port_range_min: 22 
+          port_range_max: 22 
+          remote_ip_prefix: 0.0.0.0/0 
+        - direction: ingress 
+          protocol: tcp 
+          port_range_min: 80 
+          port_range_max: 80 
+          remote_ip_prefix: 0.0.0.0/0 
+        
+  lamp_instance: 
+    type: OS::Nova::Server 
+    properties: 
+      name: lamp-stack 
+      image: { get_param: image} 
+      flavor: { get_param: flavor} 
+      key_name: { get_param: key_name } 
+      user_data: 
+        str_replace: 
+          template: | 
+            #!/bin/bash 
+            apt-get update 
+            export DEBIAN_FRONTEND=noninteractive 
+            apt-get install -y apache2 mysql-server php5 php5-mysql
+
+          params: 
+            $public_ip: { get_attr: [ lamp_floatingip, floating_ip_address ] } 
+      networks: 
+        - port: { get_resource: lamp_internal_port } 
+
+outputs: 
+  private_ip: 
+    description: Private IP address 
+    value: { get_attr: [ lamp_instance, first_address ] } 
+  public_ip: 
+    description: Public IP address 
+    value: { get_attr: [ lamp_floatingip, floating_ip_address ] }
